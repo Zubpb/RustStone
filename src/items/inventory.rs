@@ -75,6 +75,16 @@ impl Inventory {
         // later
     }
 
+    pub fn debug_print(&self) {
+        println!("  inventory ({}/{} slots used):", self.slots.len(), self.max_slots);
+        for i in 0..self.max_slots {
+            match self.slots.get(&i) {
+                Some(stack) => println!("    slot {}: {} x{}", i, stack.item.name, stack.amount),
+                None => println!("    slot {}: empty", i),
+            }
+        }
+    }
+
     fn find_valid_slot(&self, item: &ItemStack) -> Option<usize> {
         let mut first_free: Option<usize> = None;
 
