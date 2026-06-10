@@ -2,53 +2,78 @@ mod blocks;
 mod core;
 mod items;
 
-use blocks::block::Container;
-use blocks::hopper::Hopper;
-use items::item::{Item, ItemStack};
+use core::world::World;
+use crossterm::{
+    event::{self, Event, KeyCode},
+    terminal::{disable_raw_mode, enable_raw_mode},
+};
+use std::time::{Duration, Instant};
 
-fn make(name: &str, amount: u8) -> ItemStack {
-    ItemStack { item: Item { name: name.to_string() }, amount }
+fn show(world: &World, ticks: u64) {
+    disable_raw_mode().ok();
+    println!("\r\n  tick {}\r\n", ticks);
+    for line in world.tree_lines() {
+        println!("  {}\r", line);
+    }
+    println!("\r  [d] show storage   [q] quit\r");
+    enable_raw_mode().ok();
 }
 
-fn try_insert(hopper: &mut Hopper, item: ItemStack, slot: Option<usize>) {
-    let label = match slot {
-        Some(s) => format!("slot {}", s),
-        None => "any slot".to_string(),
-    };
-    let name = item.item.name.clone();
-    let amount = item.amount;
-    match hopper.inventory_mut().insert(item, slot) {
-        Ok(()) => println!("[ok] inserted {} x{} into {}", name, amount, label),
-        Err(_)  => println!("[err] failed to insert {} x{} into {}", name, amount, label),
+fn run(mut world: World, farm_input: usize) {
+    enable_raw_mode().ok();
+    println!("farm running — [d] show storage, [q] quit\r");
+
+    let mut ticks = 0u64;
+    let mut last_drop = Instant::now();
+
+    loop {
+        if event::poll(Duration::ZERO).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = event::read() {
+                match key.code {
+                    KeyCode::Char('d') => show(&world, ticks),
+                    KeyCode::Char('q') => break,
+                    _ => {}
+                }
+            }
+        }
+
+        if last_drop.elapsed() >= Duration::from_millis(100) {
+            world.put_item(farm_input, "gold_ingot", 1);
+            world.put_item(farm_input, "rotten_flesh", 1);
+            last_drop = Instant::now();
+        }
+
+        world.tick();
+        ticks += 1;
+        std::thread::sleep(Duration::from_millis(50));
     }
+
+    disable_raw_mode().ok();
+    show(&world, ticks);
 }
 
 fn main() {
-    let mut hopper = Hopper::new();
+    let mut world = World::new();
 
-    println!("=== hopper created (5 slots) ===");
-    hopper.inventory().debug_print();
+    // ── blocks ───────────────────────────────────────────────────────────────
+    let input = world.add_hopper("Input");
+    let sort_gold = world.add_hopper("Sort Gold");
+    let chest_gold = world.add_chest("Gold Chest");
+    let sort_flesh = world.add_hopper("Sort Rotten Flesh");
+    let chest_flesh = world.add_chest("Flesh Chest");
+    let leftover = world.add_hopper("Leftover");
 
-    println!("\n--- inserting some items ---");
-    try_insert(&mut hopper, make("dirt", 10), None);
-    try_insert(&mut hopper, make("cobblestone", 64), None);
-    try_insert(&mut hopper, make("dirt", 30), None);   // should stack with existing dirt
-    try_insert(&mut hopper, make("iron_ingot", 5), None);
-    try_insert(&mut hopper, make("iron_ingot", 5), Some(3)); // force into slot 3
+    // ── connections ──────────────────────────────────────────────────────────
+    world.connect(input, sort_gold);
 
-    println!("\n--- inventory after inserts ---");
-    hopper.inventory().debug_print();
+    world.set_filter(sort_gold, "gold_ingot");
+    world.connect(sort_gold, chest_gold);
+    world.set_overflow(sort_gold, sort_flesh);
 
-    println!("\n--- overflow test: dump 60 more dirt (only 24 space left in stack) ---");
-    try_insert(&mut hopper, make("dirt", 60), None); // 40 fits, 20 remainder spills to new slot
+    world.set_filter(sort_flesh, "rotten_flesh");
+    world.connect(sort_flesh, chest_flesh);
+    world.set_overflow(sort_flesh, leftover);
 
-    println!("\n--- inventory after overflow ---");
-    hopper.inventory().debug_print();
-
-    println!("\n--- try to overfill hopper (all 5 slots should be taken now) ---");
-    try_insert(&mut hopper, make("sand", 1), None); // should fail — no slots left
-    try_insert(&mut hopper, make("sand", 1), Some(0)); // should fail — slot 0 has dirt, not sand
-
-    println!("\n--- final state ---");
-    hopper.inventory().debug_print();
+    // ── run ──────────────────────────────────────────────────────────────────
+    run(world, input);
 }
